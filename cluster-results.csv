@@ -1,0 +1,2 @@
+topology,flow_id,src,dst,tx_packets,rx_packets,tx_bytes,rx_bytes,packet_loss_pct,throughput_mbps,avg_delay_ms,avg_jitter_ms
+cluster,1,10.1.1.2,10.1.3.4,14404,14403,15153008,15151956,0.006943,2.054646,1.186037,0.015164
