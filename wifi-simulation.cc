@@ -58,8 +58,6 @@ CollectStats(Ptr<FlowMonitor> monitor,
         auto t = classifier->FindFlow(flow.first);
         FlowResult r;
         r.flowId = flow.first;
-        r.src = std::to_string(t.sourceAddress.Get());
-        r.dst = std::to_string(t.destinationAddress.Get());
         r.txPackets = flow.second.txPackets;
         r.rxPackets = flow.second.rxPackets;
         r.txBytes = flow.second.txBytes;
@@ -122,18 +120,32 @@ CollectStats(Ptr<FlowMonitor> monitor,
     return results;
 }
 
-void WriteCSV(const std::string& filename,
-              const std::string& topology,
-              const std::vector<FlowResult>& results)
+void AppendCSV(const std::string& filename,
+               const std::string& topology,
+               int numNodes,
+               int numHops,
+               const std::vector<FlowResult>& results,
+               bool writeHeader)
 {
-    std::ofstream f(filename);
-    f << "topology,flow_id,src,dst,tx_packets,rx_packets,"
-      << "tx_bytes,rx_bytes,packet_loss_pct,throughput_mbps,"
-      << "avg_delay_ms,avg_jitter_ms\n";
+    std::ofstream f;
+    if (writeHeader)
+        f.open(filename, std::ios::trunc);
+    else
+        f.open(filename, std::ios::app);
+
+    if (writeHeader)
+    {
+        f << "topology,num_nodes,num_hops,flow_id,src,dst,"
+          << "tx_packets,rx_packets,tx_bytes,rx_bytes,"
+          << "packet_loss_pct,throughput_mbps,"
+          << "avg_delay_ms,avg_jitter_ms\n";
+    }
 
     for (auto& r : results)
     {
         f << topology << ","
+          << numNodes << ","
+          << numHops << ","
           << r.flowId << ","
           << r.src << ","
           << r.dst << ","
@@ -188,10 +200,10 @@ CreateChannel(double range)
     return channelHelper.Create();
 }
 
-void RunChain()
+void RunChain(int numNodes, const std::string& csvFile, bool csvHeader)
 {
     NodeContainer nodes;
-    nodes.Create(12);
+    nodes.Create(numNodes);
 
     WifiHelper wifi;
     WifiMacHelper mac;
@@ -210,7 +222,7 @@ void RunChain()
     Ptr<ListPositionAllocator> pos =
         CreateObject<ListPositionAllocator>();
 
-    for (int i = 0; i < 12; ++i)
+    for (int i = 0; i < numNodes; ++i)
     {
         pos->Add(Vector(i * 10.0, 0, 0));
     }
@@ -236,13 +248,13 @@ void RunChain()
         "ns3::UdpSocketFactory",
         InetSocketAddress(Ipv4Address::GetAny(), port));
 
-    auto sink = sinkHelper.Install(nodes.Get(11));
+    auto sink = sinkHelper.Install(nodes.Get(numNodes - 1));
     sink.Start(Seconds(1.0));
     sink.Stop(Seconds(simTime));
 
     OnOffHelper onoff(
         "ns3::UdpSocketFactory",
-        InetSocketAddress(interfaces.GetAddress(11), port));
+        InetSocketAddress(interfaces.GetAddress(numNodes - 1), port));
 
     onoff.SetConstantRate(
         DataRate(offeredRate), packetSize);
@@ -254,7 +266,8 @@ void RunChain()
     FlowMonitorHelper flowHelper;
     Ptr<FlowMonitor> monitor = flowHelper.InstallAll();
 
-    AnimationInterface anim("chain.xml");
+    std::string animFile = "chain-" + std::to_string(numNodes) + ".xml";
+    AnimationInterface anim(animFile);
     for (uint32_t i = 0; i < nodes.GetN(); ++i)
     {
         anim.UpdateNodeDescription(
@@ -263,20 +276,22 @@ void RunChain()
         anim.UpdateNodeColor(nodes.Get(i), 0, 200, 0);
     }
     anim.UpdateNodeColor(nodes.Get(0), 255, 100, 0);
-    anim.UpdateNodeColor(nodes.Get(11), 255, 0, 0);
+    anim.UpdateNodeColor(nodes.Get(numNodes - 1), 255, 0, 0);
 
     Simulator::Stop(Seconds(simTime));
     Simulator::Run();
 
-    auto results = CollectStats(monitor, flowHelper, "CHAIN (sequential)");
-    WriteCSV("chain-results.csv", "chain", results);
+    std::string label = "CHAIN (N=" + std::to_string(numNodes) +
+                        ", hops=" + std::to_string(numNodes - 1) + ")";
+    auto results = CollectStats(monitor, flowHelper, label);
 
-    monitor->SerializeToXmlFile("chain-results.xml", true, true);
+    AppendCSV(csvFile, "chain", numNodes, numNodes - 1,
+              results, csvHeader);
 
     Simulator::Destroy();
 }
 
-void RunCluster()
+void RunCluster(const std::string& csvFile, bool csvHeader)
 {
     NodeContainer masters;
     masters.Create(3);
@@ -428,8 +443,9 @@ void RunCluster()
     Simulator::Stop(Seconds(simTime));
     Simulator::Run();
 
-    auto results = CollectStats(monitor, flowHelper, "CLUSTER (grouped by frequency)");
-    WriteCSV("cluster-results.csv", "cluster", results);
+    auto results = CollectStats(monitor, flowHelper,
+                                "CLUSTER (3 clusters, 12 nodes, 3 hops)");
+    AppendCSV(csvFile, "cluster", 12, 3, results, csvHeader);
 
     monitor->SerializeToXmlFile("cluster-results.xml", true, true);
 
@@ -439,25 +455,42 @@ void RunCluster()
 int main(int argc, char* argv[])
 {
     std::string mode = "both";
+    int chainNodes = 12;
 
     CommandLine cmd;
-    cmd.AddValue("mode", "Run mode: chain, cluster, or both", mode);
+    cmd.AddValue("mode", "Run mode: chain, cluster, both, or sweep", mode);
+    cmd.AddValue("chainNodes", "Number of nodes for chain mode", chainNodes);
     cmd.Parse(argc, argv);
 
-    if (mode == "chain" || mode == "both")
+    if (mode == "chain")
     {
-        std::cout << "\n╔══════════════════════════════════════╗";
-        std::cout << "\n║    RUNNING CHAIN (SEQUENTIAL) MODE   ║";
-        std::cout << "\n╚══════════════════════════════════════╝\n";
-        RunChain();
+        std::cout << "\n--- CHAIN MODE (N=" << chainNodes << ") ---\n";
+        RunChain(chainNodes, "chain-results.csv", true);
     }
-
-    if (mode == "cluster" || mode == "both")
+    else if (mode == "cluster")
     {
-        std::cout << "\n╔══════════════════════════════════════╗";
-        std::cout << "\n║   RUNNING CLUSTER (GROUPED) MODE     ║";
-        std::cout << "\n╚══════════════════════════════════════╝\n";
-        RunCluster();
+        std::cout << "\n--- CLUSTER MODE ---\n";
+        RunCluster("cluster-results.csv", true);
+    }
+    else if (mode == "sweep")
+    {
+        bool first = true;
+        for (int n = 3; n <= 12; ++n)
+        {
+            std::cout << "\n=== SWEEP: CHAIN N=" << n << " ===\n";
+            RunChain(n, "sweep-results.csv", first);
+            first = false;
+        }
+        RunCluster("sweep-results.csv", false);
+        std::cout << "\nSweep complete. Results in sweep-results.csv\n";
+    }
+    else
+    {
+        std::cout << "\n--- CHAIN MODE (N=12) ---\n";
+        RunChain(12, "chain-results.csv", true);
+
+        std::cout << "\n--- CLUSTER MODE ---\n";
+        RunCluster("cluster-results.csv", true);
     }
 
     return 0;
