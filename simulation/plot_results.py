@@ -6,14 +6,20 @@
 от числа хопов для цепочечной и кластерной топологий.
 
 Генерируемые графики:
-  1. Пропускная способность = f(хопы)
-  2. Потери пакетов = f(хопы)
-  3. Задержка = f(хопы)
-  4. Джиттер = f(хопы)
-  5. Пропускная способность vs Задержка (параметрическая диаграмма)
-  6. Радарная диаграмма нормированного сравнения
-  7. Сводная панель (2x2)
-  8. Доставленные vs потерянные пакеты (area)
+  1.  Пропускная способность = f(хопы)
+  2.  Потери пакетов = f(хопы)
+  3.  Задержка = f(хопы)
+  4.  Джиттер = f(хопы)
+  5.  Пропускная способность vs Задержка (параметрическая диаграмма)
+  6.  Радарная диаграмма нормированного сравнения
+  7.  Сводная панель (2x2)
+  8.  Доставленные vs потерянные пакеты (area)
+  9.  КПД канала (эффективность использования полосы)
+  10. Задержка на хоп (нормированная)
+  11. Доля успешной доставки (PDR) = f(хопы)
+  12. Скорость деградации метрик (производные)
+  13. Столбчатая диаграмма: chain(12) vs cluster(12)
+  14. Тепловая карта корреляции метрик
 """
 
 import csv
@@ -454,6 +460,302 @@ def main():
              color="#555", wrap=True)
     fig.subplots_adjust(bottom=0.18, top=0.92, left=0.10, right=0.95)
     out = os.path.join(script_dir, "load_comparison.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # =========================================================
+    # 9. КПД канала (эффективность использования полосы)
+    # =========================================================
+    fig, ax = plt.subplots(figsize=(11, 6.5))
+
+    offered = float(offeredRate.replace("Mbps", "")) if "offeredRate" in dir() else 2.0
+    offered = 2.0
+    chain_eff = [r["throughput"] / offered * 100.0 for r in chain]
+    hops = [r["num_hops"] for r in chain]
+
+    bars = ax.bar(hops, chain_eff, width=0.6, color=CHAIN_COLOR, alpha=0.75,
+                  edgecolor="#C0392B", linewidth=1.2, label="Цепочка", zorder=4)
+
+    for bar, eff in zip(bars, chain_eff):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1.2,
+                f"{eff:.1f}%", ha="center", fontsize=8, fontweight="bold",
+                color=CHAIN_COLOR)
+
+    if cluster:
+        cl_eff = cluster["throughput"] / offered * 100.0
+        cl_bar = ax.bar([cluster["num_hops"] + 0.7], [cl_eff], width=0.6,
+                        color=CLUSTER_COLOR, alpha=0.75, edgecolor="#27AE60",
+                        linewidth=1.2, label="Кластер", zorder=4)
+        ax.text(cluster["num_hops"] + 0.7, cl_eff + 1.2,
+                f"{cl_eff:.1f}%", ha="center", fontsize=8, fontweight="bold",
+                color=CLUSTER_COLOR)
+
+    ax.axhline(y=100, color="#333", linestyle=":", linewidth=1.5, alpha=0.5,
+               label="Идеальная эффективность (100%)")
+    ax.set_xlabel("Количество хопов", fontsize=11)
+    ax.set_ylabel("КПД канала (%)", fontsize=11)
+    ax.set_title("Эффективность использования канала (throughput / offered rate)",
+                 fontsize=13, fontweight="bold", pad=12)
+    ax.set_ylim(0, 115)
+    ax.set_xticks(hops)
+    ax.grid(True, alpha=0.3, linestyle="--", axis="y")
+    ax.set_axisbelow(True)
+    ax.legend(fontsize=9, loc="upper right", framealpha=0.9)
+
+    caption = (
+        "КПД канала показывает, какая доля предлагаемой скорости (2 Мбит/с) реально доставляется.\n"
+        "При 11 хопах эффективность цепочки падает до 49%, кластер сохраняет 98%."
+    )
+    fig.text(0.5, 0.02, caption, ha="center", fontsize=8.5, style="italic",
+             color="#555")
+    fig.subplots_adjust(bottom=0.18, top=0.92, left=0.10, right=0.95)
+    out = os.path.join(script_dir, "efficiency_comparison.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # =========================================================
+    # 10. Задержка на хоп (нормированная)
+    # =========================================================
+    fig, ax = plt.subplots(figsize=(11, 6.5))
+
+    delay_per_hop = [r["delay"] / r["num_hops"] for r in chain]
+
+    ax.plot(hops, delay_per_hop, color=CHAIN_COLOR, marker=CHAIN_MARKER,
+            markersize=7, linewidth=2.2, label="Цепочка: задержка / хоп", zorder=5)
+    ax.fill_between(hops, delay_per_hop, alpha=0.15, color=CHAIN_COLOR, zorder=3)
+
+    for i, (h, d) in enumerate(zip(hops, delay_per_hop)):
+        if i % 2 == 0:
+            ax.annotate(f"{d:.3f}", (h, d), textcoords="offset points",
+                        xytext=(0, 12), ha="center", fontsize=7.5,
+                        color=CHAIN_COLOR, fontweight="bold")
+
+    if cluster:
+        cl_dph = cluster["delay"] / cluster["num_hops"]
+        ax.plot(cluster["num_hops"], cl_dph, color=CLUSTER_COLOR,
+                marker=CLUSTER_MARKER, markersize=10, zorder=6,
+                label=f"Кластер: {cl_dph:.3f} мс/хоп")
+        ax.axhline(y=cl_dph, color=CLUSTER_COLOR, linestyle="--",
+                   linewidth=1.5, alpha=0.6)
+
+    ax.set_xlabel("Количество хопов", fontsize=11)
+    ax.set_ylabel("Задержка на хоп (мс/хоп)", fontsize=11)
+    ax.set_title("Нормированная задержка: среднее время на один хоп",
+                 fontsize=13, fontweight="bold", pad=12)
+    ax.set_xticks(hops)
+    ax.set_ylim(bottom=0)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.set_axisbelow(True)
+    ax.legend(fontsize=9, loc="best", framealpha=0.9)
+
+    caption = (
+        "В идеальной сети задержка на хоп должна быть постоянной. Рост этой метрики\n"
+        "свидетельствует о нарастании конкуренции за среду и увеличении времени backoff.\n"
+        "Кластер обеспечивает 0.397 мс/хоп — близко к значению цепочки при малом числе хопов."
+    )
+    fig.text(0.5, 0.02, caption, ha="center", fontsize=8.5, style="italic",
+             color="#555")
+    fig.subplots_adjust(bottom=0.20, top=0.92, left=0.10, right=0.95)
+    out = os.path.join(script_dir, "delay_per_hop.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # =========================================================
+    # 11. PDR (Packet Delivery Ratio) = f(хопы)
+    # =========================================================
+    fig, ax = plt.subplots(figsize=(11, 6.5))
+
+    pdr_chain = [r["rx_packets"] / r["tx_packets"] * 100.0 for r in chain]
+
+    ax.plot(hops, pdr_chain, color=CHAIN_COLOR, marker=CHAIN_MARKER,
+            markersize=7, linewidth=2.2, label="Цепочка (PDR)", zorder=5)
+    ax.fill_between(hops, pdr_chain, 100, alpha=0.12, color="#E74C3C",
+                    label="Зона потерь", zorder=2)
+    ax.fill_between(hops, 0, pdr_chain, alpha=0.12, color="#2ECC71",
+                    label="Зона доставки", zorder=2)
+
+    for i, (h, p) in enumerate(zip(hops, pdr_chain)):
+        ax.annotate(f"{p:.1f}%", (h, p), textcoords="offset points",
+                    xytext=(0, -16 if i % 2 == 0 else 10),
+                    ha="center", fontsize=7.5, color=CHAIN_COLOR, fontweight="bold")
+
+    if cluster:
+        cl_pdr = cluster["rx_packets"] / cluster["tx_packets"] * 100.0
+        ax.plot(cluster["num_hops"], cl_pdr, color=CLUSTER_COLOR,
+                marker=CLUSTER_MARKER, markersize=10, zorder=6,
+                label=f"Кластер (PDR = {cl_pdr:.2f}%)")
+
+    ax.axhline(y=95, color="#F39C12", linestyle=":", linewidth=1.5, alpha=0.7)
+    ax.text(hops[-1], 95.5, "Порог надёжной доставки (95%)",
+            fontsize=8, color="#F39C12", ha="right")
+
+    ax.set_xlabel("Количество хопов", fontsize=11)
+    ax.set_ylabel("Доля доставленных пакетов, PDR (%)", fontsize=11)
+    ax.set_title("Коэффициент доставки пакетов (Packet Delivery Ratio)",
+                 fontsize=13, fontweight="bold", pad=12)
+    ax.set_xticks(hops)
+    ax.set_ylim(50, 102)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.set_axisbelow(True)
+    ax.legend(fontsize=9, loc="lower left", framealpha=0.9)
+
+    caption = (
+        "PDR — ключевой показатель надёжности сети. При превышении 5–6 хопов PDR цепочки\n"
+        "опускается ниже 95%, что неприемлемо для большинства приложений.\n"
+        "Кластер с PDR 99.97% гарантирует практически безошибочную доставку."
+    )
+    fig.text(0.5, 0.02, caption, ha="center", fontsize=8.5, style="italic",
+             color="#555")
+    fig.subplots_adjust(bottom=0.20, top=0.92, left=0.10, right=0.95)
+    out = os.path.join(script_dir, "pdr_comparison.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # =========================================================
+    # 12. Скорость деградации метрик (производные)
+    # =========================================================
+    fig, axes = plt.subplots(2, 2, figsize=(16, 11))
+    fig.suptitle(
+        "Скорость деградации метрик: приращение на каждый дополнительный хоп",
+        fontsize=14, fontweight="bold", y=0.98)
+
+    metrics_deriv = [
+        ("throughput", "ΔПропускная способность (Мбит/с)", "#E74C3C", "Деградация пропускной способности"),
+        ("packet_loss", "ΔПотери пакетов (%)", "#E67E22", "Прирост потерь пакетов"),
+        ("delay", "ΔЗадержка (мс)", "#3498DB", "Прирост задержки"),
+        ("jitter", "ΔДжиттер (мс)", "#9B59B6", "Прирост джиттера"),
+    ]
+
+    for idx, (key, ylabel, color, title) in enumerate(metrics_deriv):
+        ax = axes[idx // 2][idx % 2]
+        vals = [r[key] for r in chain]
+        deltas = [vals[i+1] - vals[i] for i in range(len(vals)-1)]
+        mid_hops = [(hops[i] + hops[i+1]) / 2 for i in range(len(hops)-1)]
+
+        ax.bar(mid_hops, deltas, width=0.7, color=color, alpha=0.7,
+               edgecolor=color, linewidth=1.2, zorder=4)
+
+        for mh, d in zip(mid_hops, deltas):
+            sign = "+" if d > 0 else ""
+            ax.text(mh, d + (0.003 if abs(d) < 0.1 else abs(d) * 0.08),
+                    f"{sign}{d:.3f}", ha="center", fontsize=7,
+                    color=color, fontweight="bold")
+
+        ax.axhline(y=0, color="#333", linewidth=0.8)
+        ax.set_xlabel("Хопы (середина интервала)", fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        ax.grid(True, alpha=0.3, linestyle="--", axis="y")
+        ax.set_axisbelow(True)
+
+    fig.tight_layout(rect=[0.02, 0.02, 0.98, 0.93])
+    fig.subplots_adjust(hspace=0.35, wspace=0.30)
+    out = os.path.join(script_dir, "degradation_rate.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # =========================================================
+    # 13. Столбчатая диаграмма: chain(12) vs cluster(12)
+    # =========================================================
+    if chain12 and cluster:
+        fig, axes = plt.subplots(1, 4, figsize=(18, 6))
+        fig.suptitle(
+            "Прямое сравнение: Цепочка (12 узлов, 11 хопов) vs Кластер (12 узлов, 3 хопа)",
+            fontsize=14, fontweight="bold", y=1.02)
+
+        bar_data = [
+            ("Пропускная\nспособность\n(Мбит/с)", chain12["throughput"], cluster["throughput"], True),
+            ("Потери\nпакетов\n(%)", chain12["packet_loss"], cluster["packet_loss"], False),
+            ("Средняя\nзадержка\n(мс)", chain12["delay"], cluster["delay"], False),
+            ("Средний\nджиттер\n(мс)", chain12["jitter"], cluster["jitter"], False),
+        ]
+
+        for ax, (label, c_val, cl_val, higher_better) in zip(axes, bar_data):
+            x = [0, 1]
+            vals = [c_val, cl_val]
+            colors = [CHAIN_COLOR, CLUSTER_COLOR]
+
+            bars = ax.bar(x, vals, width=0.55, color=colors, alpha=0.8,
+                          edgecolor=["#C0392B", "#27AE60"], linewidth=1.5, zorder=4)
+
+            for bar, v in zip(bars, vals):
+                fmt = f"{v:.4f}" if v < 0.1 else (f"{v:.2f}" if v < 10 else f"{v:.1f}")
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() * 1.05,
+                        fmt, ha="center", fontsize=10, fontweight="bold")
+
+            if higher_better:
+                winner = 1 if cl_val > c_val else 0
+            else:
+                winner = 1 if cl_val < c_val else 0
+            bars[winner].set_edgecolor("#FFD700")
+            bars[winner].set_linewidth(3)
+
+            ratio = max(c_val, cl_val) / max(min(c_val, cl_val), 0.0001)
+            ax.text(0.5, -0.18, f"Разница: ×{ratio:.1f}",
+                    transform=ax.transAxes, ha="center", fontsize=9,
+                    fontweight="bold", color="#555")
+
+            ax.set_xticks(x)
+            ax.set_xticklabels(["Цепочка", "Кластер"], fontsize=10)
+            ax.set_title(label, fontsize=11, fontweight="bold")
+            ax.set_ylim(bottom=0)
+            ax.grid(True, alpha=0.3, linestyle="--", axis="y")
+            ax.set_axisbelow(True)
+
+        fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+        out = os.path.join(script_dir, "bar_comparison.png")
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved: {out}")
+
+    # =========================================================
+    # 14. Тепловая карта корреляции метрик (цепочка)
+    # =========================================================
+    fig, ax = plt.subplots(figsize=(9, 8))
+
+    metric_names = ["Хопы", "Пропускн.", "Потери %", "Задержка", "Джиттер", "PDR %"]
+    data_matrix = []
+    for r in chain:
+        pdr = r["rx_packets"] / r["tx_packets"] * 100.0
+        data_matrix.append([r["num_hops"], r["throughput"], r["packet_loss"],
+                            r["delay"], r["jitter"], pdr])
+
+    data_np = np.array(data_matrix)
+    n_metrics = len(metric_names)
+    corr = np.corrcoef(data_np.T)
+
+    im = ax.imshow(corr, cmap="RdYlGn", vmin=-1, vmax=1, aspect="auto")
+    cbar = fig.colorbar(im, ax=ax, label="Коэффициент корреляции Пирсона", pad=0.02)
+
+    ax.set_xticks(range(n_metrics))
+    ax.set_yticks(range(n_metrics))
+    ax.set_xticklabels(metric_names, fontsize=10, rotation=45, ha="right")
+    ax.set_yticklabels(metric_names, fontsize=10)
+
+    for i in range(n_metrics):
+        for j in range(n_metrics):
+            val = corr[i, j]
+            color = "white" if abs(val) > 0.6 else "black"
+            ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                    fontsize=9, fontweight="bold", color=color)
+
+    ax.set_title("Корреляционная матрица метрик (цепочечная топология)",
+                 fontsize=13, fontweight="bold", pad=15)
+
+    caption = (
+        "Матрица корреляции Пирсона показывает линейную зависимость между метриками.\n"
+        "Пропускная способность и PDR имеют сильную отрицательную корреляцию с числом хопов,\n"
+        "задержка, джиттер и потери — сильную положительную корреляцию."
+    )
+    fig.text(0.5, 0.01, caption, ha="center", fontsize=8.5, style="italic",
+             color="#555")
+    fig.subplots_adjust(bottom=0.18, top=0.92, left=0.15, right=0.95)
+    out = os.path.join(script_dir, "correlation_heatmap.png")
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out}")
